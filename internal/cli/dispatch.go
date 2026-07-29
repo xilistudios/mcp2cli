@@ -8,16 +8,19 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/xilistudios/mcp2cli/internal/bake"
 	"github.com/xilistudios/mcp2cli/internal/cache"
 	"github.com/xilistudios/mcp2cli/internal/graphql"
 	"github.com/xilistudios/mcp2cli/internal/mcp"
+	"github.com/xilistudios/mcp2cli/internal/oauth"
 	"github.com/xilistudios/mcp2cli/internal/openapi"
 	"github.com/xilistudios/mcp2cli/internal/session"
 	"github.com/xilistudios/mcp2cli/internal/types"
 	"github.com/xilistudios/mcp2cli/internal/util"
+	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 )
 
 // ---------------------------------------------------------------------------
@@ -174,9 +177,48 @@ func mainImpl(argv []string, baked *bake.Config) error {
 		return fmt.Errorf("--spec, --mcp, --mcp-stdio, and --graphql are mutually exclusive.")
 	}
 
-	// 9. OAuth stub.
+	// 9. OAuth preparation.
+	var oauthOpts *oauth.Options
 	if g.OAuth || g.OAuthClientID != "" || g.OAuthClientSecret != "" {
-		return fmt.Errorf("OAuth is not yet implemented in the Go port")
+		if g.MCP == "" {
+			return fmt.Errorf("--oauth requires an HTTP MCP server via --mcp (not --mcp-stdio/--spec/--graphql)")
+		}
+		opts := oauth.Options{
+			ClientID:     g.OAuthClientID,
+			ClientSecret: g.OAuthClientSecret,
+			ClientName:   g.OAuthClientName,
+			Scope:        g.OAuthScope,
+			RedirectURI:  g.OAuthRedirectURI,
+			Flow:         g.OAuthFlow,
+		}
+		if err := opts.Validate(); err != nil {
+			return err
+		}
+		flow := opts.Flow
+		if flow == "" || flow == "auto" {
+			if opts.ClientID != "" && opts.ClientSecret != "" {
+				flow = "client_credentials"
+			} else {
+				flow = "authorization_code"
+			}
+		}
+		switch flow {
+		case "client_credentials":
+			if opts.ClientID == "" || opts.ClientSecret == "" {
+				return fmt.Errorf("client_credentials flow requires --oauth-client-id and --oauth-client-secret")
+			}
+			hdr, err := oauth.ClientCredentialsHeader(context.Background(), nil, opts, g.MCP)
+			if err != nil {
+				return err
+			}
+			authHeaders = append(authHeaders, hdr)
+			// oauthOpts stays nil → handleMCP uses the normal connect path (bearer already in headers).
+		case "authorization_code":
+			opts.Flow = "authorization_code"
+			oauthOpts = &opts
+		default:
+			return fmt.Errorf("unknown --oauth-flow %q (expected auto, authorization_code, or client_credentials)", flow)
+		}
 	}
 
 	// 10. Resolve resource/prompt actions.
@@ -200,7 +242,7 @@ func mainImpl(argv []string, baked *bake.Config) error {
 		return handleGraphQL(g, authHeaders, remaining)
 	}
 	if g.MCP != "" || g.MCPStdio != "" {
-		return handleMCP(g, authHeaders, envVars, remaining, resourceAction, promptAction, baked)
+		return handleMCP(g, authHeaders, envVars, remaining, resourceAction, promptAction, baked, oauthOpts)
 	}
 	return handleOpenAPI(g, authHeaders, remaining, baked)
 }
@@ -430,7 +472,7 @@ func handleGraphQL(g *GlobalFlags, authHeaders [][2]string, remaining []string) 
 // MCP mode
 // ---------------------------------------------------------------------------
 
-func handleMCP(g *GlobalFlags, authHeaders [][2]string, envVars map[string]string, remaining []string, resourceAction, promptAction string, baked *bake.Config) error {
+func handleMCP(g *GlobalFlags, authHeaders [][2]string, envVars map[string]string, remaining []string, resourceAction, promptAction string, baked *bake.Config, oauthOpts *oauth.Options) error {
 	source := g.MCP
 	isStdio := false
 	if g.MCPStdio != "" {
@@ -452,9 +494,33 @@ func handleMCP(g *GlobalFlags, authHeaders [][2]string, envVars map[string]strin
 	srcHash := cache.SourceHashFor(source)
 	ctx := context.Background()
 
+	// Build a dialer: OAuth-aware or plain.
+	var dial func(context.Context) (*mcp.Client, error)
+	liveList := false
+	if oauthOpts != nil {
+		store := oauth.NewFileTokenStore(filepath.Join(cache.CacheDir(), "oauth", cache.SourceHashFor(source)))
+		if oauthOpts.ClientID == "" {
+			if cid, ok := store.LoadClientID(); ok {
+				oauthOpts.ClientID = cid
+			}
+		}
+		cfg := oauth.BuildConfig(*oauthOpts, store)
+		optsCopy := *oauthOpts
+		dial = func(c context.Context) (*mcp.Client, error) {
+			return mcp.ConnectOAuth(c, source, authHeaders, cfg, g.Transport, func(cc context.Context, h *mcptransport.OAuthHandler) error {
+				return oauth.Authorize(cc, h, optsCopy)
+			})
+		}
+		liveList = true
+	} else {
+		dial = func(c context.Context) (*mcp.Client, error) {
+			return mcp.Connect(c, source, isStdio, authHeaders, envVars, g.Transport)
+		}
+	}
+
 	// Resource/prompt actions: connect once and handle.
 	if resourceAction != "" || promptAction != "" {
-		client, err := mcp.Connect(ctx, source, isStdio, authHeaders, envVars, g.Transport)
+		client, err := dial(ctx)
 		if err != nil {
 			return err
 		}
@@ -493,13 +559,30 @@ func handleMCP(g *GlobalFlags, authHeaders [][2]string, envVars map[string]strin
 
 	// LIST mode
 	if g.ListCommands {
-		tools, err := mcp.FetchToolsCached(ctx, key, g.CacheTTL, g.Refresh, source, isStdio, authHeaders, envVars, g.Transport)
-		if err != nil {
-			return err
-		}
-		commands := mcp.ExtractCommands(tools)
-		if baked != nil {
-			commands = bake.FilterCommands(commands, baked.Include, baked.Exclude, baked.Methods)
+		var commands []types.CommandDef
+		if liveList {
+			client, err := dial(ctx)
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+			tools, err := client.ListTools(ctx)
+			if err != nil {
+				return err
+			}
+			commands = mcp.ExtractCommands(tools)
+			if baked != nil {
+				commands = bake.FilterCommands(commands, baked.Include, baked.Exclude, baked.Methods)
+			}
+		} else {
+			tools, err := mcp.FetchToolsCached(ctx, key, g.CacheTTL, g.Refresh, source, isStdio, authHeaders, envVars, g.Transport)
+			if err != nil {
+				return err
+			}
+			commands = mcp.ExtractCommands(tools)
+			if baked != nil {
+				commands = bake.FilterCommands(commands, baked.Include, baked.Exclude, baked.Methods)
+			}
 		}
 		if g.SearchPattern != "" {
 			commands = FilterCommandsSearch(commands, g.SearchPattern)
@@ -519,11 +602,25 @@ func handleMCP(g *GlobalFlags, authHeaders [][2]string, envVars map[string]strin
 	}
 
 	// Need tool list for command lookup (try cache first).
-	tools, err := mcp.FetchToolsCached(ctx, key, g.CacheTTL, g.Refresh, source, isStdio, authHeaders, envVars, g.Transport)
-	if err != nil {
-		return err
+	var commands []types.CommandDef
+	if liveList {
+		client, err := dial(ctx)
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		tools, err := client.ListTools(ctx)
+		if err != nil {
+			return err
+		}
+		commands = mcp.ExtractCommands(tools)
+	} else {
+		tools, err := mcp.FetchToolsCached(ctx, key, g.CacheTTL, g.Refresh, source, isStdio, authHeaders, envVars, g.Transport)
+		if err != nil {
+			return err
+		}
+		commands = mcp.ExtractCommands(tools)
 	}
-	commands := mcp.ExtractCommands(tools)
 	if baked != nil {
 		commands = bake.FilterCommands(commands, baked.Include, baked.Exclude, baked.Methods)
 	}
@@ -576,7 +673,7 @@ func handleMCP(g *GlobalFlags, authHeaders [][2]string, envVars map[string]strin
 	}
 
 	// Connect and call the tool.
-	client, err := mcp.Connect(ctx, source, isStdio, authHeaders, envVars, g.Transport)
+	client, err := dial(ctx)
 	if err != nil {
 		return err
 	}

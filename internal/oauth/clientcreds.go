@@ -72,6 +72,20 @@ func ClientCredentialsToken(ctx context.Context, hc *http.Client, tokenEndpoint,
 	return tok, nil
 }
 
+// ClientCredentialsHeader discovers the token endpoint for serverURL, performs a
+// client_credentials grant, and returns an Authorization bearer header pair.
+func ClientCredentialsHeader(ctx context.Context, hc *http.Client, o Options, serverURL string) ([2]string, error) {
+	te, err := DiscoverTokenEndpoint(ctx, hc, serverURL)
+	if err != nil {
+		return [2]string{}, err
+	}
+	tok, err := ClientCredentialsToken(ctx, hc, te, o.ClientID, o.ClientSecret, o.Scopes())
+	if err != nil {
+		return [2]string{}, err
+	}
+	return [2]string{"Authorization", "Bearer " + tok.AccessToken}, nil
+}
+
 // DiscoverTokenEndpoint discovers the OAuth token endpoint for an MCP server URL.
 // Tries RFC9728 protected-resource metadata first, then the authorization-server metadata.
 func DiscoverTokenEndpoint(ctx context.Context, hc *http.Client, serverURL string) (string, error) {

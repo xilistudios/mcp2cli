@@ -199,6 +199,45 @@ func TestClientCredentialsToken_Error(t *testing.T) {
 	}
 }
 
+func TestClientCredentialsHeader(t *testing.T) {
+	var tokenURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"token_endpoint": tokenURL,
+			})
+		case "/token":
+			if r.FormValue("grant_type") != "client_credentials" {
+				t.Errorf("grant_type = %q", r.FormValue("grant_type"))
+			}
+			user, pass, ok := r.BasicAuth()
+			if !ok || user != "id" || pass != "sec" {
+				t.Errorf("basic auth = %q/%q ok=%v", user, pass, ok)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "TOK",
+				"token_type":   "Bearer",
+				"expires_in":   3600,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	tokenURL = srv.URL + "/token"
+
+	hdr, err := ClientCredentialsHeader(context.Background(), nil, Options{ClientID: "id", ClientSecret: "sec"}, srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr[0] != "Authorization" || hdr[1] != "Bearer TOK" {
+		t.Errorf("got %v, want {Authorization Bearer TOK}", hdr)
+	}
+}
+
 func TestDiscoverTokenEndpoint(t *testing.T) {
 	var tokenEndpoint string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
