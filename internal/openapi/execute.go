@@ -267,8 +267,7 @@ func Execute(req Request, authHeaders [][2]string, out util.OutputOptions, clien
 	bodyBytes, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode >= 400 {
-		fmt.Fprintf(util.Err, "Error %d: %s\n", resp.StatusCode, string(bodyBytes))
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return fmt.Errorf("%d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	// Output handling.

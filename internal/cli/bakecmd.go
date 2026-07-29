@@ -67,15 +67,15 @@ func bakeCreate(argv []string) error {
 	fs.SetOutput(io.Discard)
 
 	var (
-		name, spec, mcpCmd, mcpStdio       string
-		baseURL, transport, description     string
-		oauthClientID, oauthClientSecret    string
-		oauthClientName, oauthScope         string
-		oauthRedirectURI, oauthFlow         string
-		include, exclude, methods           string
-		cacheTTL                            int
-		useOAuth, force                     bool
-		authHeaders, envs                   []string
+		name, spec, mcpCmd, mcpStdio     string
+		baseURL, transport, description  string
+		oauthClientID, oauthClientSecret string
+		oauthClientName, oauthScope      string
+		oauthRedirectURI, oauthFlow      string
+		include, exclude, methods        string
+		cacheTTL                         int
+		useOAuth, force                  bool
+		authHeaders, envs                []string
 	)
 
 	fs.StringVar(&spec, "spec", "", "")
@@ -146,10 +146,7 @@ func bakeCreate(argv []string) error {
 		return err
 	}
 
-	// Allow --name as an alternative.
-	if name == "" {
-		name = "" // already set above if positional found
-	}
+	// Allow --name as an alternative (not registered as a flag).
 	// Check remaining positional args (shouldn't happen but handle gracefully).
 	if name == "" && fs.NArg() > 0 {
 		name = fs.Arg(0)

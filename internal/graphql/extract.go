@@ -230,13 +230,13 @@ func ExtractCommands(schema map[string]any) []types.CommandDef {
 			}
 
 			commands = append(commands, types.CommandDef{
-				Name:                   cliName,
-				Description:            desc,
-				Params:                 params,
-				HasBody:                len(params) > 0,
-				GraphQLOperationType:   op.opType,
-				GraphQLFieldName:       fieldName,
-				GraphQLReturnType:      toTypeMap(fieldDef["type"]),
+				Name:                 cliName,
+				Description:          desc,
+				Params:               params,
+				HasBody:              len(params) > 0,
+				GraphQLOperationType: op.opType,
+				GraphQLFieldName:     fieldName,
+				GraphQLReturnType:    toTypeMap(fieldDef["type"]),
 			})
 		}
 	}

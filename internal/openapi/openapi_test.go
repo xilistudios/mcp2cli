@@ -697,8 +697,8 @@ func TestExecute_400Error(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for HTTP 400")
 	}
-	if !strings.Contains(errBuf.String(), "Error 400:") {
-		t.Fatalf("expected 'Error 400:' in stderr, got: %q", errBuf.String())
+	if !strings.Contains(err.Error(), "400:") {
+		t.Fatalf("expected '400:' in error, got: %q", err.Error())
 	}
 }
 

@@ -18,9 +18,9 @@ import (
 
 // ContentPart is a single content element returned by CallTool.
 type ContentPart struct {
-	Type string // "text", "image", etc.
-	Text string // non-empty for text content
-	Data string // base64 blob for binary content (images, audio, etc.)
+	Type string `json:"type"` // "text", "image", etc.
+	Text string `json:"text"` // non-empty for text content
+	Data string `json:"data"` // base64 blob for binary content (images, audio, etc.)
 }
 
 // CallResult is the simplified result of a tool call.

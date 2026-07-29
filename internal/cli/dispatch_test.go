@@ -112,13 +112,13 @@ func TestRun_Baked_NoSuchTool(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRun_NoSource(t *testing.T) {
-	_, errBuf, _ := captureOutputs(t)
+	_, _, _ = captureOutputs(t)
 	err := Run([]string{"--list"})
 	if err == nil {
 		t.Fatal("expected error for missing source")
 	}
-	if !strings.Contains(errBuf.String(), "one of --spec") {
-		t.Errorf("expected source validation message, got %q", errBuf.String())
+	if !strings.Contains(err.Error(), "one of --spec") {
+		t.Errorf("expected source validation message in error, got %q", err.Error())
 	}
 }
 

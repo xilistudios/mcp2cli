@@ -11,7 +11,9 @@ import (
 
 func main() {
 	if err := cli.Run(os.Args[1:]); err != nil {
-		fmt.Fprintln(util.Err, "Error:", err)
+		if err.Error() != "" {
+			fmt.Fprintln(util.Err, "Error:", err)
+		}
 		os.Exit(1)
 	}
 }

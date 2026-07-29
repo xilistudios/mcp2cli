@@ -20,6 +20,16 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// Silent error sentinel — main.go skips printing when err.Error() == ""
+// ---------------------------------------------------------------------------
+
+type silentErr struct{}
+
+func (silentErr) Error() string { return "" }
+
+var errSilent = silentErr{}
+
+// ---------------------------------------------------------------------------
 // Public entrypoint
 // ---------------------------------------------------------------------------
 
@@ -71,7 +81,6 @@ func mainImpl(argv []string, baked *bake.Config) error {
 	globalArgv, toolArgv := SplitAtSubcommand(argv, valueOpts, boolOpts)
 
 	if err := fs.Parse(globalArgv); err != nil {
-		fmt.Fprintln(util.Err, "Error:", err)
 		return err
 	}
 	remaining := append(append([]string{}, fs.Args()...), toolArgv...)
@@ -84,12 +93,10 @@ func mainImpl(argv []string, baked *bake.Config) error {
 	// 5. Parse auth headers and env vars.
 	authHeaders, err := util.ParseKVList(g.AuthHeaders, ":", "auth header", true)
 	if err != nil {
-		fmt.Fprintln(util.Err, "Error:", err)
 		return err
 	}
 	envPairs, err := util.ParseKVList(g.Env, "=", "env", false)
 	if err != nil {
-		fmt.Fprintln(util.Err, "Error:", err)
 		return err
 	}
 	envVars := make(map[string]string, len(envPairs))
@@ -112,7 +119,6 @@ func mainImpl(argv []string, baked *bake.Config) error {
 		}
 	}
 	if needsSource && active == 0 {
-		fmt.Fprintln(util.Err, "Error: one of --spec, --mcp, --mcp-stdio, or --graphql is required.")
 		return fmt.Errorf("one of --spec, --mcp, --mcp-stdio, or --graphql is required.")
 	}
 	if active > 1 {
@@ -207,7 +213,6 @@ func handleOpenAPI(g *GlobalFlags, authHeaders [][2]string, remaining []string, 
 
 	spec, err := openapi.LoadSpec(g.Spec, authHeaders, g.CacheKey, g.CacheTTL, g.Refresh, nil)
 	if err != nil {
-		fmt.Fprintln(util.Err, "Error:", err)
 		return err
 	}
 
@@ -238,7 +243,7 @@ func handleOpenAPI(g *GlobalFlags, authHeaders [][2]string, remaining []string, 
 	// No subcommand given
 	if len(remaining) == 0 {
 		fmt.Fprintln(util.Err, "Use --list to see all available commands.")
-		return fmt.Errorf("no subcommand specified")
+		return errSilent
 	}
 
 	// Derive base URL
@@ -276,7 +281,6 @@ func handleOpenAPI(g *GlobalFlags, authHeaders [][2]string, remaining []string, 
 
 	values, hasStdin, err := ParseCommandArgs(cmd, remaining[1:])
 	if err != nil {
-		fmt.Fprintln(util.Err, "Error:", err)
 		return err
 	}
 
@@ -284,14 +288,12 @@ func handleOpenAPI(g *GlobalFlags, authHeaders [][2]string, remaining []string, 
 	if hasStdin {
 		stdinJSON, err = util.ReadStdinJSON("OpenAPI request body")
 		if err != nil {
-			fmt.Fprintln(util.Err, "Error:", err)
 			return err
 		}
 	}
 
 	req, err := openapi.BuildRequest(cmd, baseURL, values, hasStdin, stdinJSON)
 	if err != nil {
-		fmt.Fprintln(util.Err, "Error:", err)
 		return err
 	}
 
@@ -312,7 +314,6 @@ func handleGraphQL(g *GlobalFlags, authHeaders [][2]string, remaining []string) 
 
 	schema, err := graphql.LoadSchema(g.GraphQL, authHeaders, g.CacheKey, g.CacheTTL, g.Refresh, nil)
 	if err != nil {
-		fmt.Fprintln(util.Err, "Error:", err)
 		return err
 	}
 
@@ -347,7 +348,7 @@ func handleGraphQL(g *GlobalFlags, authHeaders [][2]string, remaining []string) 
 			fmt.Fprintln(util.Out, "\nUse --list for the same output, or provide a subcommand.")
 		}
 		fmt.Fprintln(util.Err, "Use --list to see all available commands.")
-		return fmt.Errorf("no subcommand specified")
+		return errSilent
 	}
 
 	// Find and execute the command
@@ -358,7 +359,6 @@ func handleGraphQL(g *GlobalFlags, authHeaders [][2]string, remaining []string) 
 
 	values, _, err := ParseCommandArgs(cmd, remaining[1:])
 	if err != nil {
-		fmt.Fprintln(util.Err, "Error:", err)
 		return err
 	}
 
@@ -451,7 +451,6 @@ func handleMCP(g *GlobalFlags, authHeaders [][2]string, envVars map[string]strin
 	if g.ListCommands {
 		tools, err := mcp.FetchToolsCached(ctx, key, g.CacheTTL, g.Refresh, source, isStdio, authHeaders, envVars, g.Transport)
 		if err != nil {
-			fmt.Fprintln(util.Err, "Error:", err)
 			return err
 		}
 		commands := mcp.ExtractCommands(tools)
@@ -478,7 +477,6 @@ func handleMCP(g *GlobalFlags, authHeaders [][2]string, envVars map[string]strin
 	// Need tool list for command lookup (try cache first).
 	tools, err := mcp.FetchToolsCached(ctx, key, g.CacheTTL, g.Refresh, source, isStdio, authHeaders, envVars, g.Transport)
 	if err != nil {
-		fmt.Fprintln(util.Err, "Error:", err)
 		return err
 	}
 	commands := mcp.ExtractCommands(tools)
@@ -514,14 +512,12 @@ func handleMCP(g *GlobalFlags, authHeaders [][2]string, envVars map[string]strin
 	// Parse tool arguments. ParseCommandArgs handles --stdin when cmd.HasBody.
 	values, hasStdin, perr := ParseCommandArgs(cmd, remaining[1:])
 	if perr != nil {
-		fmt.Fprintln(util.Err, "Error:", perr)
 		return perr
 	}
 
 	if hasStdin {
 		stdinData, serr := util.ReadStdinJSON("MCP tool arguments")
 		if serr != nil {
-			fmt.Fprintln(util.Err, "Error:", serr)
 			return serr
 		}
 		if m, ok := stdinData.(map[string]any); ok {
@@ -562,7 +558,7 @@ func handleMCP(g *GlobalFlags, authHeaders [][2]string, envVars map[string]strin
 		text := result.Text()
 		if result.IsError {
 			fmt.Fprintln(util.Err, text)
-			return fmt.Errorf("MCP tool returned an error")
+			return errSilent
 		}
 		oo := outOpts(g)
 		util.OutputResult(text, oo)
