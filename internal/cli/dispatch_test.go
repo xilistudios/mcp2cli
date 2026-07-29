@@ -145,13 +145,15 @@ func TestRun_OAuthStub(t *testing.T) {
 }
 
 func TestRun_SessionsStub(t *testing.T) {
-	_, _, _ = captureOutputs(t)
-	err := Run([]string{"--spec", "x.json", "--session-list"})
-	if err == nil {
-		t.Fatal("expected sessions stub error")
+	t.Setenv("MCP2CLI_CACHE_DIR", t.TempDir())
+	out, _, _ := captureOutputs(t)
+	// --session-list should now work (sessions are implemented).
+	err := Run([]string{"--session-list"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "sessions are not yet implemented") {
-		t.Errorf("expected sessions stub message, got %v", err)
+	if !strings.Contains(out.String(), "No active sessions") {
+		t.Errorf("expected 'No active sessions', got %q", out.String())
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/xilistudios/mcp2cli/internal/graphql"
 	"github.com/xilistudios/mcp2cli/internal/mcp"
 	"github.com/xilistudios/mcp2cli/internal/openapi"
+	"github.com/xilistudios/mcp2cli/internal/session"
 	"github.com/xilistudios/mcp2cli/internal/types"
 	"github.com/xilistudios/mcp2cli/internal/util"
 )
@@ -37,6 +38,13 @@ var errSilent = silentErr{}
 // subcommand, baked-tool shortcut (@name), or the normal mainImpl flow.
 func Run(argv []string) error {
 	if len(argv) > 0 {
+		// Internal: session daemon entrypoint.
+		if argv[0] == "__session-daemon" {
+			if len(argv) < 2 {
+				return fmt.Errorf("missing daemon config")
+			}
+			return session.RunDaemon(argv[1])
+		}
 		if argv[0] == "bake" {
 			return runBake(argv[1:])
 		}
@@ -110,8 +118,49 @@ func mainImpl(argv []string, baked *bake.Config) error {
 		return nil
 	}
 
-	// 7. Validate source modes.
-	needsSource := !(g.SessionList || g.SessionStop != "" || g.Session != "")
+	// 7. Session operations (before source-mode validation).
+	if g.SessionList {
+		sessions, _ := session.List()
+		if len(sessions) == 0 {
+			fmt.Fprintln(util.Out, "No active sessions.")
+		} else {
+			for _, s := range sessions {
+				status := "alive"
+				if !s.Alive {
+					status = "dead"
+				}
+				fmt.Fprintf(util.Out, "  %-20s %-8s %s  PID=%d\n", s.Name, s.Transport, status, s.Pid)
+			}
+		}
+		return nil
+	}
+	if g.SessionStop != "" {
+		if err := session.Stop(g.SessionStop); err != nil {
+			return err
+		}
+		fmt.Fprintf(util.Out, "Session '%s' stopped.\n", g.SessionStop)
+		return nil
+	}
+	if g.SessionStart != "" {
+		if g.MCP == "" && g.MCPStdio == "" {
+			return fmt.Errorf("--session-start requires --mcp or --mcp-stdio")
+		}
+		source := g.MCP
+		isStdio := g.MCPStdio != ""
+		if isStdio {
+			source = g.MCPStdio
+		}
+		if err := session.Start(g.SessionStart, source, isStdio, authHeaders, envVars, g.Transport); err != nil {
+			return err
+		}
+		return nil
+	}
+	if g.Session != "" {
+		return handleSession(g, remaining)
+	}
+
+	// 8. Validate source modes.
+	needsSource := true
 	active := 0
 	for _, s := range []string{g.Spec, g.MCP, g.MCPStdio, g.GraphQL} {
 		if s != "" {
@@ -125,14 +174,9 @@ func mainImpl(argv []string, baked *bake.Config) error {
 		return fmt.Errorf("--spec, --mcp, --mcp-stdio, and --graphql are mutually exclusive.")
 	}
 
-	// 8. OAuth stub.
+	// 9. OAuth stub.
 	if g.OAuth || g.OAuthClientID != "" || g.OAuthClientSecret != "" {
 		return fmt.Errorf("OAuth is not yet implemented in the Go port")
-	}
-
-	// 9. Sessions stub.
-	if g.SessionList || g.SessionStop != "" || g.SessionStart != "" || g.Session != "" {
-		return fmt.Errorf("sessions are not yet implemented in the Go port")
 	}
 
 	// 10. Resolve resource/prompt actions.
@@ -566,4 +610,165 @@ func handleMCP(g *GlobalFlags, authHeaders [][2]string, envVars map[string]strin
 
 	cache.RecordUsage(srcHash, toolName) // ignore error
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Session client mode
+// ---------------------------------------------------------------------------
+
+// handleSession handles --session <name> operations by routing requests
+// to a running session daemon over its Unix domain socket.
+func handleSession(g *GlobalFlags, remaining []string) error {
+	sess := g.Session
+	oo := outOpts(g)
+
+	// Resource actions.
+	if g.ListResources {
+		r, err := session.Request(sess, "list_resources", nil)
+		if err != nil {
+			return err
+		}
+		util.OutputResult(r, oo)
+		return nil
+	}
+	if g.ListResourceTemplates {
+		r, err := session.Request(sess, "list_resource_templates", nil)
+		if err != nil {
+			return err
+		}
+		util.OutputResult(r, oo)
+		return nil
+	}
+	if g.ReadResource != "" {
+		r, err := session.Request(sess, "read_resource", map[string]any{"uri": g.ReadResource})
+		if err != nil {
+			return err
+		}
+		util.OutputResult(r, oo)
+		return nil
+	}
+
+	// Prompt actions.
+	if g.ListPrompts {
+		r, err := session.Request(sess, "list_prompts", nil)
+		if err != nil {
+			return err
+		}
+		util.OutputResult(r, oo)
+		return nil
+	}
+	if g.GetPrompt != "" {
+		pargs := make(map[string]any)
+		for _, pa := range g.PromptArg {
+			if k, v, ok := strings.Cut(pa, "="); ok {
+				pargs[k] = v
+			}
+		}
+		r, err := session.Request(sess, "get_prompt", map[string]any{"name": g.GetPrompt, "arguments": pargs})
+		if err != nil {
+			return err
+		}
+		util.OutputResult(r, oo)
+		return nil
+	}
+
+	// List mode.
+	if g.ListCommands {
+		tools := sessionTools(sess)
+		commands := mcp.ExtractCommands(tools)
+		if g.SearchPattern != "" {
+			commands = FilterCommandsSearch(commands, g.SearchPattern)
+			if len(commands) == 0 {
+				if !g.JSONOutput {
+					fmt.Fprintf(util.Out, "\nNo tools matching '%s'.\n", g.SearchPattern)
+				}
+				return nil
+			}
+			if !g.JSONOutput {
+				fmt.Fprintf(util.Out, "\nTools matching '%s':\n", g.SearchPattern)
+			}
+		} else {
+			if !g.JSONOutput {
+				fmt.Fprintln(util.Out, "\nAvailable tools:")
+			}
+		}
+		ListMCP(commands, listOpts(g, cache.SourceHashFor(sess)))
+		return nil
+	}
+
+	// No subcommand given: show available tools.
+	if len(remaining) == 0 {
+		tools := sessionTools(sess)
+		commands := mcp.ExtractCommands(tools)
+		if !g.JSONOutput {
+			fmt.Fprintln(util.Out, "Available tools:")
+		}
+		ListMCP(commands, listOpts(g, cache.SourceHashFor(sess)))
+		if !g.JSONOutput {
+			fmt.Fprintln(util.Out, "\nUse --list for the same output, or provide a subcommand.")
+		}
+		return errSilent
+	}
+
+	// Tool call via session.
+	tools := sessionTools(sess)
+	commands := mcp.ExtractCommands(tools)
+
+	cmd, ok := findCommand(commands, remaining[0])
+	if !ok {
+		return fmt.Errorf("unknown command: %s (see --list)", remaining[0])
+	}
+
+	values, hasStdin, err := ParseCommandArgs(cmd, remaining[1:])
+	if err != nil {
+		return err
+	}
+
+	var arguments map[string]any
+	if hasStdin {
+		sj, err := util.ReadStdinJSON("session " + sess + " tool arguments")
+		if err != nil {
+			return err
+		}
+		arguments, _ = sj.(map[string]any)
+	} else {
+		arguments = make(map[string]any)
+		for _, p := range cmd.Params {
+			if v, ok := values[p.Name]; ok {
+				arguments[p.OriginalName] = v
+			}
+		}
+	}
+
+	r, err := session.Request(sess, "call_tool", map[string]any{"name": cmd.ToolName, "arguments": arguments})
+	if err != nil {
+		return err
+	}
+	util.OutputResult(r, oo)
+	return nil
+}
+
+// sessionTools fetches the tool list from a running session daemon.
+func sessionTools(sess string) []map[string]any {
+	r, err := session.Request(sess, "list_tools", nil)
+	if err != nil {
+		return nil
+	}
+	return toToolMaps(r)
+}
+
+// toToolMaps converts an any value (expected []any of map[string]any)
+// into []map[string]any.
+func toToolMaps(v any) []map[string]any {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(arr))
+	for _, e := range arr {
+		if m, ok := e.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out
 }
