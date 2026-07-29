@@ -48,7 +48,17 @@ release:
     ---
 
 
-    **Install with Go:**
+    **Install with one command:**
+
+
+    ```sh
+
+    curl -fsSL https://raw.githubusercontent.com/xilistudios/mcp2cli/main/install.sh | sh
+
+    ```
+
+
+    Or install with Go:
 
 
     ```sh
