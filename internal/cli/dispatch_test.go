@@ -57,7 +57,7 @@ func TestRun_Version(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out.String(), "mcp2cli 3.3.1") {
+	if !strings.Contains(out.String(), "mcp2cli") {
 		t.Errorf("expected version output, got %q", out.String())
 	}
 }

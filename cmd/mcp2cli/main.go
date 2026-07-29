@@ -9,7 +9,15 @@ import (
 	"github.com/xilistudios/mcp2cli/internal/util"
 )
 
+var (
+	version   = "dev"
+	gitCommit = "unknown"
+	buildTime = "unknown"
+)
+
 func main() {
+	cli.SetVersionInfo(version, gitCommit, buildTime)
+
 	if err := cli.Run(os.Args[1:]); err != nil {
 		if err.Error() != "" {
 			fmt.Fprintln(util.Err, "Error:", err)
