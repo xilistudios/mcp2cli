@@ -117,7 +117,7 @@ func mainImpl(argv []string, baked *bake.Config) error {
 
 	// 6. Version
 	if g.ShowVersion {
-		fmt.Fprintln(util.Out, "mcp2cli 3.3.1")
+		fmt.Fprintf(util.Out, "mcp2cli %s (commit %s, built %s)\n", appVersion, appCommit, appBuildTime)
 		return nil
 	}
 
