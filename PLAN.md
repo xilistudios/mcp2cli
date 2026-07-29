@@ -8,7 +8,11 @@ Faithful Go port, restructured as a modular project. Single binary `mcp2cli`.
 
 ## Stack decisions
 - MCP client: github.com/mark3labs/mcp-go (stdio + SSE + streamable HTTP)
-- Dynamic subcommands/flags/help: github.com/spf13/cobra (+ pflag)
+- Dynamic subcommands/flags/help: hand-rolled two-stage parsing with stdlib `flag`
+  (global FlagSet up to subcommand boundary via SplitAtSubcommand, then a per-command
+  FlagSet). This mirrors Python argparse semantics and avoids global/tool flag collisions
+  (e.g. --env). cobra deliberately NOT used (persistent-flag inheritance would re-introduce
+  the collision Python works around in _split_at_subcommand).
 - YAML specs: gopkg.in/yaml.v3
 - HTTP: net/http (stdlib)
 - No other deps unless justified.
