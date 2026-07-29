@@ -53,6 +53,29 @@ gh --list            # after: mcp2cli bake install gh  (creates ~/.local/bin/gh)
 mcp2cli @gh --list   # or invoke directly
 ```
 
+### Sessions
+
+Keep one MCP connection alive across many calls (avoids reconnecting each time):
+
+```
+mcp2cli --mcp https://api.example.com/mcp --session-start work
+mcp2cli --session-list
+mcp2cli --session work search --q "quarterly report"   # reuses the live connection
+mcp2cli --session-stop work
+```
+
+### OAuth
+
+```
+# client credentials (server-to-server)
+mcp2cli --mcp https://api.example.com/mcp --oauth \
+  --oauth-client-id "$ID" --oauth-client-secret "$SECRET" --list
+
+# authorization code + PKCE (opens a browser; DCR if no client id)
+mcp2cli --mcp https://api.example.com/mcp --oauth \
+  --oauth-redirect-uri http://localhost:3334/oauth/callback --list
+```
+
 ## Architecture
 
 ```
@@ -65,17 +88,27 @@ internal/
   graphql            introspection, command extraction, selection sets, execution
   mcp                mcp-go client wrapper (stdio/SSE/streamable), tools/resources/prompts
   bake               command filtering, baked-config CRUD, wrapper install
+  session            persistent MCP daemon (unix socket) + client routing
+  oauth              token store, PKCE callback server, client_credentials, endpoint discovery
   cli                global flags, argv splitting, dynamic per-command parser, dispatch
 ```
 
 ## Status
 
 Implemented & tested: OpenAPI, MCP (stdio + HTTP), GraphQL, baking, listing/search/sort,
-output formats, caching, usage tracking.
+output formats, caching, usage tracking, **persistent sessions** and **OAuth**.
 
-Not yet ported (return a clear error):
-- **OAuth** (`--oauth*`): authorization-code + PKCE + DCR and client-credentials flows.
-- **Sessions** (`--session*`): persistent daemon over a Unix socket.
+- **Sessions** (`--session-start/--session-list/--session-stop/--session`): a background daemon
+  holds one long-lived MCP connection and serves requests over a Unix domain socket, so repeated
+  calls reuse a single connection (no reconnect/handshake per invocation).
+- **OAuth** (`--oauth*`): authorization-code + PKCE (with dynamic client registration when no
+  client id is given) and client-credentials flows, with file-based token persistence under the
+  cache dir. authorization-code opens a browser + local callback server; client-credentials
+  discovers the token endpoint (RFC 9728 / well-known) and injects a bearer token.
+
+The interactive authorization-code browser flow is not covered by automated tests (it requires a
+real browser + OAuth server); the token store, callback server, discovery, client-credentials
+grant and connection wiring are all unit/integration tested.
 
 ## License
 
