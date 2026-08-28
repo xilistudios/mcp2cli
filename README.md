@@ -33,6 +33,26 @@ mcp2cli --graphql https://api/graphql user --id 7  # run a query (auto selection
 
 ## Install
 
+### Quick install (recommended)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/xilistudios/mcp2cli/main/install.sh | sh
+```
+
+Options:
+
+```sh
+# Install a specific version
+curl -fsSL https://raw.githubusercontent.com/xilistudios/mcp2cli/main/install.sh | sh -s -- --version v1.0.0
+
+# Install to a custom prefix (default: ~/.local)
+curl -fsSL https://raw.githubusercontent.com/xilistudios/mcp2cli/main/install.sh | sh -s -- --prefix /usr/local
+```
+
+The script auto-detects your OS and architecture, downloads the correct binary from GitHub Releases, verifies the checksum, and places it in `<prefix>/bin/mcp2cli`.
+
+### From source
+
 ```
 go build -o mcp2cli ./cmd/mcp2cli
 # or
