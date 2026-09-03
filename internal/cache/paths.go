@@ -48,3 +48,18 @@ func homeDir() string {
 	}
 	return h
 }
+
+// OAuthDir returns the directory holding OAuth credentials for a server source
+// hash. Credentials belong in the config tree, not the cache tree: caches are
+// disposable and get wiped by cache cleaners, tmpfiles rules and ephemeral
+// containers, which used to throw away refresh tokens and force a browser
+// login. Reads MCP2CLI_CONFIG_DIR at call time.
+func OAuthDir(srcHash string) string {
+	return filepath.Join(ConfigDir(), "oauth", srcHash)
+}
+
+// LegacyOAuthDir returns the pre-keyring location under the cache directory.
+// mcp2cli reads it once to migrate existing tokens and then deletes it.
+func LegacyOAuthDir(srcHash string) string {
+	return filepath.Join(CacheDir(), "oauth", srcHash)
+}

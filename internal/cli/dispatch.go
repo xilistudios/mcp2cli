@@ -8,9 +8,9 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"path/filepath"
 	"strings"
 
+	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	"github.com/xilistudios/mcp2cli/internal/bake"
 	"github.com/xilistudios/mcp2cli/internal/cache"
 	"github.com/xilistudios/mcp2cli/internal/graphql"
@@ -20,7 +20,6 @@ import (
 	"github.com/xilistudios/mcp2cli/internal/session"
 	"github.com/xilistudios/mcp2cli/internal/types"
 	"github.com/xilistudios/mcp2cli/internal/util"
-	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 )
 
 // ---------------------------------------------------------------------------
@@ -207,7 +206,9 @@ func mainImpl(argv []string, baked *bake.Config) error {
 			if opts.ClientID == "" || opts.ClientSecret == "" {
 				return fmt.Errorf("client_credentials flow requires --oauth-client-id and --oauth-client-secret")
 			}
-			hdr, err := oauth.ClientCredentialsHeader(context.Background(), nil, opts, g.MCP)
+			ccSrcHash := cache.SourceHashFor(g.MCP)
+			ccStore := oauth.NewSecretStore(ccSrcHash, cache.OAuthDir(ccSrcHash), cache.LegacyOAuthDir(ccSrcHash))
+			hdr, err := oauth.CachedClientCredentialsHeader(context.Background(), nil, opts, g.MCP, ccStore, g.Refresh)
 			if err != nil {
 				return err
 			}
@@ -494,21 +495,35 @@ func handleMCP(g *GlobalFlags, authHeaders [][2]string, envVars map[string]strin
 	srcHash := cache.SourceHashFor(source)
 	ctx := context.Background()
 
+	// OAuth maintenance flags work for any HTTP MCP source, with or without --oauth.
+	if g.OAuthReset || g.OAuthStatus {
+		if isStdio {
+			return fmt.Errorf("--oauth-reset and --oauth-status require an HTTP MCP server via --mcp")
+		}
+		return oauthMaintenance(g, source, srcHash)
+	}
+
 	// Build a dialer: OAuth-aware or plain.
 	var dial func(context.Context) (*mcp.Client, error)
 	liveList := false
 	if oauthOpts != nil {
-		store := oauth.NewFileTokenStore(filepath.Join(cache.CacheDir(), "oauth", cache.SourceHashFor(source)))
-		if oauthOpts.ClientID == "" {
-			if cid, ok := store.LoadClientID(); ok {
-				oauthOpts.ClientID = cid
+		store := oauth.NewSecretStore(srcHash, cache.OAuthDir(srcHash), cache.LegacyOAuthDir(srcHash))
+		// Reuse the client credentials from a previous run. Dynamic client
+		// registration issues a new client_id per run, and a refresh token is
+		// only valid for the client that was issued it.
+		if ci, ok := store.LoadClientInfo(); ok {
+			if oauthOpts.ClientID == "" {
+				oauthOpts.ClientID = ci.ClientID
+			}
+			if oauthOpts.ClientSecret == "" {
+				oauthOpts.ClientSecret = ci.ClientSecret
 			}
 		}
 		cfg := oauth.BuildConfig(*oauthOpts, store)
 		optsCopy := *oauthOpts
 		dial = func(c context.Context) (*mcp.Client, error) {
 			return mcp.ConnectOAuth(c, source, authHeaders, cfg, g.Transport, func(cc context.Context, h *mcptransport.OAuthHandler) error {
-				return oauth.Authorize(cc, h, optsCopy)
+				return oauth.Authorize(cc, h, optsCopy, store)
 			})
 		}
 		liveList = true

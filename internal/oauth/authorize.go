@@ -12,7 +12,11 @@ import (
 // surfaced by an OAuthAuthorizationRequiredError. It starts a local callback server,
 // performs DCR if no client_id is configured, opens the browser, waits for the callback,
 // and exchanges the code for tokens.
-func Authorize(ctx context.Context, handler *mcptransport.OAuthHandler, o Options) error {
+//
+// store may be nil (used by tests); when present, client credentials obtained via
+// dynamic client registration are persisted so later runs can refresh the tokens
+// those credentials were issued for.
+func Authorize(ctx context.Context, handler *mcptransport.OAuthHandler, o Options, store *SecretStore) error {
 	cb, err := StartCallbackServer(o.RedirectURI)
 	if err != nil {
 		return fmt.Errorf("starting callback server: %w", err)
@@ -33,6 +37,16 @@ func Authorize(ctx context.Context, handler *mcptransport.OAuthHandler, o Option
 	if o.ClientID == "" {
 		if err := handler.RegisterClient(ctx, o.EffectiveClientName()); err != nil {
 			return fmt.Errorf("dynamic client registration failed: %w", err)
+		}
+		// Persist the freshly registered client. mcp-go keeps it only in the
+		// handler's memory, so without this the next run registers again and
+		// the stored refresh token becomes unusable (invalid_client).
+		if store != nil {
+			if cid := handler.GetClientID(); cid != "" {
+				if err := store.SaveClientInfo(ClientInfo{ClientID: cid, ClientSecret: handler.GetClientSecret()}); err != nil {
+					fmt.Fprintf(util.Err, "mcp2cli: warning: could not persist OAuth client_id: %v\n", err)
+				}
+			}
 		}
 	}
 

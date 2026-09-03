@@ -32,6 +32,7 @@ type GlobalFlags struct {
 	OAuthScope                   string
 	OAuthRedirectURI             string
 	OAuthFlow                    string
+	OAuthReset, OAuthStatus      bool
 	ListResources                bool
 	ListResourceTemplates        bool
 	ReadResource                 string
@@ -134,6 +135,8 @@ func NewGlobalFlagSet(g *GlobalFlags) (fs *flag.FlagSet, valueOpts map[string]bo
 	addBool("json", &g.JSONOutput, false, "Output as JSON")
 	addBool("toon", &g.Toon, false, "Output in TOON format")
 	addBool("oauth", &g.OAuth, false, "Enable OAuth authentication")
+	addBool("oauth-reset", &g.OAuthReset, false, "Delete stored OAuth tokens/client info for this server")
+	addBool("oauth-status", &g.OAuthStatus, false, "Show where OAuth tokens for this server are stored")
 	addBool("list-resources", &g.ListResources, false, "List MCP resources")
 	addBool("list-resource-templates", &g.ListResourceTemplates, false, "List MCP resource templates")
 	addBool("list-prompts", &g.ListPrompts, false, "List MCP prompts")

@@ -36,21 +36,40 @@ func TestFileTokenStore_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestFileTokenStore_ClientID(t *testing.T) {
+func TestFileTokenStore_ClientInfo(t *testing.T) {
 	dir := t.TempDir()
 	store := NewFileTokenStore(dir)
 
-	id, ok := store.LoadClientID()
-	if ok || id != "" {
-		t.Fatalf("expected empty id, got %q ok=%v", id, ok)
+	if _, ok := store.LoadClientInfo(); ok {
+		t.Fatal("expected no client info in an empty store")
 	}
 
-	if err := store.SaveClientID("cid"); err != nil {
+	if err := store.SaveClientInfo(ClientInfo{ClientID: "cid", ClientSecret: "sec"}); err != nil {
 		t.Fatal(err)
 	}
-	id, ok = store.LoadClientID()
-	if !ok || id != "cid" {
-		t.Fatalf("expected cid, got %q ok=%v", id, ok)
+	ci, ok := store.LoadClientInfo()
+	if !ok || ci.ClientID != "cid" || ci.ClientSecret != "sec" {
+		t.Fatalf("got %+v ok=%v", ci, ok)
+	}
+
+	// An empty client_id is meaningless and must not overwrite good data.
+	if err := store.SaveClientInfo(ClientInfo{}); err == nil {
+		t.Fatal("expected error saving empty client_id")
+	}
+}
+
+// A store with no directory is inert: reads miss, writes are no-ops. This lets
+// callers pass an optional legacy location without nil checks.
+func TestFileTokenStore_Inert(t *testing.T) {
+	store := NewFileTokenStore("")
+	if _, err := store.GetToken(context.Background()); !errors.Is(err, mcptransport.ErrNoToken) {
+		t.Fatalf("expected ErrNoToken, got %v", err)
+	}
+	if _, ok := store.LoadClientInfo(); ok {
+		t.Fatal("expected no client info")
+	}
+	if err := store.SaveToken(context.Background(), &mcptransport.Token{AccessToken: "x"}); err != nil {
+		t.Fatalf("inert store write should succeed as a no-op, got %v", err)
 	}
 }
 
