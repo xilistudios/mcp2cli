@@ -96,6 +96,26 @@ mcp2cli --mcp https://api.example.com/mcp --oauth \
   --oauth-redirect-uri http://localhost:3334/oauth/callback --list
 ```
 
+Tokens, refresh tokens and dynamic-client-registration credentials (client id **and**
+secret) are persisted in the **OS keyring** (service `mcp2cli-oauth`), so they survive
+reboots and aggressive cache cleaners. When no keyring is available (headless servers,
+containers), mcp2cli falls back to files under `~/.config/mcp2cli/oauth/<hash>/` with
+`0600` permissions. Old credentials left in `~/.cache/mcp2cli/oauth/` are picked up and
+migrated automatically on first use.
+
+```bash
+# where are my credentials kept, are they expired, which backend is active?
+mcp2cli --mcp https://api.example.com/mcp --oauth-status
+
+# log out: delete every stored token/client credential for this server
+mcp2cli --mcp https://api.example.com/mcp --oauth-reset
+```
+
+Force a backend with `MCP2CLI_TOKEN_STORE=keyring` (fail if no keyring is available —
+never writes plaintext) or `MCP2CLI_TOKEN_STORE=file` (skip the keyring entirely).
+Expired access tokens are refreshed silently with the stored refresh token; if renewal
+is rejected, the next run falls back to a fresh interactive login.
+
 ## Architecture
 
 ```
@@ -122,13 +142,16 @@ output formats, caching, usage tracking, **persistent sessions** and **OAuth**.
   holds one long-lived MCP connection and serves requests over a Unix domain socket, so repeated
   calls reuse a single connection (no reconnect/handshake per invocation).
 - **OAuth** (`--oauth*`): authorization-code + PKCE (with dynamic client registration when no
-  client id is given) and client-credentials flows, with file-based token persistence under the
-  cache dir. authorization-code opens a browser + local callback server; client-credentials
-  discovers the token endpoint (RFC 9728 / well-known) and injects a bearer token.
+  client id is given) and client-credentials flows. Credentials (tokens, refresh tokens, client
+  id/secret) live in the OS keyring with a durable file fallback under the config dir, silent
+  refresh on expiry, and `--oauth-status` / `--oauth-reset` for management. authorization-code
+  opens a browser + local callback server; client-credentials discovers the token endpoint
+  (RFC 9728 / well-known), caches the grant until near expiry, and injects a bearer token.
 
 The interactive authorization-code browser flow is not covered by automated tests (it requires a
-real browser + OAuth server); the token store, callback server, discovery, client-credentials
-grant and connection wiring are all unit/integration tested.
+real browser + OAuth server); the token store (keyring + file fallback, migration, status,
+reset), callback server, discovery, client-credentials grant and connection wiring are all
+unit/integration tested against an embedded OAuth server.
 
 ## License
 

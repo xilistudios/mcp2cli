@@ -11,6 +11,7 @@ import (
 	"time"
 
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
+	"github.com/xilistudios/mcp2cli/internal/util"
 )
 
 // ClientCredentialsToken performs an OAuth2 client_credentials grant against tokenEndpoint.
@@ -75,13 +76,54 @@ func ClientCredentialsToken(ctx context.Context, hc *http.Client, tokenEndpoint,
 // ClientCredentialsHeader discovers the token endpoint for serverURL, performs a
 // client_credentials grant, and returns an Authorization bearer header pair.
 func ClientCredentialsHeader(ctx context.Context, hc *http.Client, o Options, serverURL string) ([2]string, error) {
-	te, err := DiscoverTokenEndpoint(ctx, hc, serverURL)
+	tok, err := clientCredentialsTokenFor(ctx, hc, o, serverURL)
 	if err != nil {
 		return [2]string{}, err
 	}
-	tok, err := ClientCredentialsToken(ctx, hc, te, o.ClientID, o.ClientSecret, o.Scopes())
+	return [2]string{"Authorization", "Bearer " + tok.AccessToken}, nil
+}
+
+// clientCredentialsTokenFor discovers the endpoint and runs the grant.
+func clientCredentialsTokenFor(ctx context.Context, hc *http.Client, o Options, serverURL string) (*mcptransport.Token, error) {
+	te, err := DiscoverTokenEndpoint(ctx, hc, serverURL)
+	if err != nil {
+		return nil, err
+	}
+	return ClientCredentialsToken(ctx, hc, te, o.ClientID, o.ClientSecret, o.Scopes())
+}
+
+// CachedClientCredentialsHeader returns a bearer header for a client_credentials
+// grant, reusing a keyring-cached token while it is valid.
+//
+// A client_credentials grant has no refresh token, so previously every
+// invocation re-minted one - an extra discovery round trip plus token request
+// per command. Caching is safe because the token is short-lived by contract and
+// the cached copy carries its own ExpiresAt. forceRefresh (from --refresh)
+// bypasses the cache, and a cached token within expirySafety of expiry is
+// renewed so a long-running command does not fail mid-flight with a 401.
+func CachedClientCredentialsHeader(
+	ctx context.Context,
+	hc *http.Client,
+	o Options,
+	serverURL string,
+	store *SecretStore,
+	forceRefresh bool,
+) ([2]string, error) {
+	if store != nil && !forceRefresh {
+		if tok, ok := store.LoadGrant(GrantClientCredentials); ok {
+			return [2]string{"Authorization", "Bearer " + tok.AccessToken}, nil
+		}
+	}
+
+	tok, err := clientCredentialsTokenFor(ctx, hc, o, serverURL)
 	if err != nil {
 		return [2]string{}, err
+	}
+
+	if store != nil {
+		if err := store.SaveGrant(GrantClientCredentials, tok); err != nil {
+			fmt.Fprintf(util.Err, "mcp2cli: warning: could not cache client_credentials token: %v\n", err)
+		}
 	}
 	return [2]string{"Authorization", "Bearer " + tok.AccessToken}, nil
 }
